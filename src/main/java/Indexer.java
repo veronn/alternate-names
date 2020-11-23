@@ -5,17 +5,11 @@ import java.util.List;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
-import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.*;
 import org.apache.lucene.queryparser.classic.ParseException;
-import org.apache.lucene.queryparser.classic.QueryParser;
-import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.Query;
-import org.apache.lucene.search.ScoreDoc;
-import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.*;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.util.Version;
@@ -46,18 +40,26 @@ public class Indexer {
         searcher = new IndexSearcher(reader);
     }
 
-    public static void addDocument(String title, String infoboxName, String alternateName, String alternateNameFull) throws IOException {
+    public static void addDocument(String title, String titleFull, String infoboxName, String alternateName, String alternateNameFull) throws IOException {
         Document doc = new Document();
-        doc.add(new TextField("title", title, Field.Store.YES));
+        doc.add(new StringField("title", title, Field.Store.YES));
+        doc.add(new StringField("titleLowerCase", title.toLowerCase(), Field.Store.YES));
+        doc.add(new StringField("titleFull", titleFull, Field.Store.YES));
         doc.add(new TextField("infoboxName", infoboxName, Field.Store.YES));
         doc.add(new TextField("alternateName", alternateName, Field.Store.YES));
         doc.add(new TextField("alternateNameFull", alternateNameFull, Field.Store.YES));
+        doc.add(new TextField("fullText", titleFull.toLowerCase() + " " + alternateNameFull.toLowerCase(), Field.Store.YES));
+        //System.out.println(title + " - " + titleFull + " - " + infoboxName + " - " + alternateName + " - " + alternateNameFull); // ** DEBUG **
         writer.addDocument(doc);
     }
 
-    public static List<Document> getDocuments(String field, String query) throws ParseException, IOException {
+    public static List<Document> getDocuments(String field, String query, BooleanClause.Occur occur) throws ParseException, IOException {
         List<Document> documents = new ArrayList<>();
-        Query q = new QueryParser(field, analyzer).parse(query);
+
+        BooleanQuery q = new BooleanQuery();
+        q.add(new TermQuery(new Term(field, query)), occur);
+
+        //Query q = new QueryParser(field, analyzer).parse('"' + query + '"');
 
         TopDocs docs = searcher.search(q, reader.numDocs());
         ScoreDoc[] hits = docs.scoreDocs;
