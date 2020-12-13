@@ -6,15 +6,12 @@ import java.util.List;
 import java.util.regex.*;
 
 public class Downloader {
-
-    public Downloader() {
-    }
-
+    // download all partial wiki articles dumps, return the names of downloaded files
     public static List<String> download() throws IOException {
         URL url = new URL("https://dumps.wikimedia.org/enwiki/latest/");
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream()));
-        Pattern pattern = Pattern.compile("(?:<a\\s+href\\s*=\\s*\")(enwiki-latest-pages-articles[^\"]*[^xml])(?:\"\\s*>)", Pattern.CASE_INSENSITIVE);
+        Pattern pattern = Pattern.compile("(?:<a\\s+href\\s*=\\s*\")(enwiki-latest-pages-articles[0-9]+[^\"]*[^xml])(?:\"\\s*>)", Pattern.CASE_INSENSITIVE);
         Matcher matcher;
         String fileName, fileUrl;
         List<String> fileNames = new ArrayList();

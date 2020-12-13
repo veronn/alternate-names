@@ -7,10 +7,8 @@ import org.apache.commons.compress.compressors.CompressorStreamFactory;
 import org.jsoup.Jsoup;
 import org.jsoup.safety.Whitelist;
 import java.io.*;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Date;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -21,6 +19,15 @@ import static org.apache.commons.lang3.StringEscapeUtils.unescapeHtml4;
 public class Parser {
 
     private static Indexer indexer;
+    private static int titlesWithAltNameTotal = 0;
+    private static int titlesTotal = 0;
+    private static int infoboxesTotal = 0;
+    private static int infoboxesInTitle = 0;
+    private static int alternateNamesTotal = 0;
+    private static List<Integer> akaHist;
+    private static List<Integer> altNameHist;
+    private static List<Integer> alternateNameHist;
+    private static List<Integer> allTagsHist;
 
     public Parser() {
     }
@@ -47,6 +54,38 @@ public class Parser {
         Pattern pattern = Pattern.compile("<\\/\\s*text\\s*>", Pattern.CASE_INSENSITIVE); // <\/\s*text\s*>
         Matcher matcher = pattern.matcher(line);
         return matcher.find();
+    }
+
+    private static void initHistArrays() {
+        akaHist = new ArrayList<>();
+        altNameHist = new ArrayList<>();
+        alternateNameHist = new ArrayList<>();
+        allTagsHist = new ArrayList<>();
+        for (int i = 0; i <= 1000; i++) {
+            akaHist.add(i, 0);
+            altNameHist.add(i, 0);
+            alternateNameHist.add(i, 0);
+            allTagsHist.add(i, 0);
+        }
+    }
+
+    private static void addToHistogram(int frequency, String tag) {
+        switch (tag) {
+            case "aka":
+                akaHist.set(frequency, akaHist.get(frequency) + 1);
+                break;
+            case "alt_name":
+                altNameHist.set(frequency, altNameHist.get(frequency) + 1);
+                break;
+            case "alternate_name":
+                alternateNameHist.set(frequency, alternateNameHist.get(frequency) + 1);
+                break;
+            case "all_tags":
+                allTagsHist.set(frequency, allTagsHist.get(frequency) + 1);
+                break;
+            default:
+                break;
+        }
     }
 
     public static List<String> getAlternateNames(String line) {
@@ -100,6 +139,7 @@ public class Parser {
                     return alternateNames;
                 }
                 else {
+                    // hlist
                     pattern = Pattern.compile("(\\{\\s*\\{\\s*hlist\\s*\\|\\s*)([^}]*)(}\\s*})\\s*(.*)", Pattern.CASE_INSENSITIVE); // (\{\s*\{\s*hlist\s*\|\s*)([^}]*)(}\s*})\s*(.*)
                     matcher = pattern.matcher(line);
                     if (matcher.find()) {
@@ -157,49 +197,55 @@ public class Parser {
     }
 
     public static List<String> recheckAlternateNames(List<String> alternateNames) {
+        List<String> recheckedAlternateNames = new ArrayList<>();
         for (int i = 0; i < alternateNames.size(); i++) {
-            alternateNames.set(i, Jsoup.parse(alternateNames.get(i)).text());
+            String tmp = Jsoup.parse(alternateNames.get(i)).text();
+            if (tmp.matches("^(?!\\s*$).+")) { // non empty string
+                recheckedAlternateNames.add(tmp);
+            }
         }
-        return alternateNames;
+        return recheckedAlternateNames;
     }
 
     public static void parse(String fileName) throws IOException, CompressorException {
         Pattern titlePattern = Pattern.compile("(<\\s*title\\s*>)([^<]*)(<\\/\\s*title\\s*>)", Pattern.CASE_INSENSITIVE); // (<\s*title\s*>)([^<]*)(<\/\s*title\s*>)
         Pattern infoboxPattern = Pattern.compile("(\\{\\s*\\{\\s*Infobox\\s*)(.*)", Pattern.CASE_INSENSITIVE); // ({\s*{\s*Infobox\s*)(.*)
         Pattern infoboxNamePattern = Pattern.compile("(\\|\\s*name\\s*=\\s*)(.*)", Pattern.CASE_INSENSITIVE); // (\|\s*name\s*=)(.*)
-        //Pattern akaPattern = Pattern.compile("(\\|\\s*aka\\s*=\\s*)(.*)", Pattern.CASE_INSENSITIVE); // (\|\s*aka\s*=)(.*)
-        Pattern akaPattern = Pattern.compile("(\\|\\s*(?:aka|alt_name|alternate_name)\\s*=\\s*)(.*)", Pattern.CASE_INSENSITIVE); // (\|\s*(?:aka|alt_name|alternate_name)\s*=)(.*)
+        Pattern akaPattern = Pattern.compile("(\\|\\s*((?:aka|alt_name|alternate_name))\\s*=\\s*)(.*)", Pattern.CASE_INSENSITIVE); // (\|\s*(?:aka|alt_name|alternate_name)\s*=)(.*) // names of parameters where the parser will look for alternate names
         Pattern unwantedTitlePattern = Pattern.compile("^(wikipedia|template|draft):.*", Pattern.CASE_INSENSITIVE); // ^(wikipedia|template|draft):.*
         Matcher matcher;
         boolean matchFound;
         BufferedReader in = getBufferedReaderForCompressedFile(fileName);
         String line, title = "", text, infobox, aka, infoboxName = "";
         List<String> alternateNames;
-
+        List<String> alternateNamesAll;
+        initHistArrays();
         indexer.initWriter();
 
-        //for (int i = 0; i < 20000; i++) { if // ** DEBUG **
-        while
-        ((line = in.readLine()) != null) {
-            /*LocalDateTime now = LocalDateTime.now();
-            LocalDateTime end = LocalDateTime.of(2020, 11, 23, 06, 59, 00);
-            if (now.isAfter(end)) {
-                break;
-            }*/ // ** DEBUG **
+        while ((line = in.readLine()) != null) {
             // if start of PAGE found, continue reading lines until title found
             if (pageStartFound(line)) {
+                alternateNamesAll = new ArrayList<>();
                 // read the next line - TITLE should be there
                 if ((line = in.readLine()) != null) {
                     // try to find TITLE
                     matcher = titlePattern.matcher(line);
                     matchFound = matcher.find();
-                    if (matchFound)
-                        title = matcher.group(2);
+                    if (matchFound) {
+                        title = unescapeHtml4(matcher.group(2));
+                        titlesTotal++;
+                        infoboxesInTitle = 0;
+                    }
                     // continue reading lines until end of PAGE found
                     while ((line = in.readLine()) != null) {
                         // if end of PAGE found, break the loop (and try to find the next PAGE)
-                        if (pageEndFound(line))
+                        if (pageEndFound(line)) {
+                            if (alternateNamesAll.size() > 0) {
+                                addToHistogram(alternateNamesAll.size(), "all_tags");
+                                index(title, "", alternateNamesAll, "all_tags");
+                            }
                             break;
+                        }
                         // try to find TEXT
                         if (textStartFound(line)) {
                             // try to find INFOBOX - can be in the same line as TEXT
@@ -229,10 +275,8 @@ public class Parser {
                                         matcher = akaPattern.matcher(line);
                                         matchFound = matcher.find();
                                         if (matchFound) {
-                                            /*if ("Rakshasa".equals(title)) {
-                                                System.out.println("** DEBUG **");
-                                            }*/
-                                            aka = matcher.group(2);
+                                            aka = matcher.group(3);
+                                            String tag = matcher.group(2).toLowerCase();
                                             if ("".equals(aka))
                                                 continue;
                                             if (aka.matches("^[^{]*}\\s*}.*$")) // missing starting {{ --> ignore
@@ -260,8 +304,16 @@ public class Parser {
                                             matcher = unwantedTitlePattern.matcher(title);
                                             // ignore title starting with certain prefix, such as Wikipedia:, Template: or Draft:
                                             if (!matcher.find()) {
+                                                infoboxesTotal++;
+                                                infoboxesInTitle++;
+                                                if (infoboxesInTitle == 1) {
+                                                    titlesWithAltNameTotal++;
+                                                }
+                                                alternateNamesTotal += alternateNames.size();
+                                                addToHistogram(alternateNames.size(), tag);
+                                                alternateNamesAll.addAll(alternateNames);
                                                 print(title, infoboxName, alternateNames);
-                                                index(title, infoboxName, alternateNames);
+                                                index(title, infoboxName, alternateNames, tag);
                                             }
 
                                         }
@@ -270,13 +322,14 @@ public class Parser {
                                 if (textEndFound(line))
                                     break;
                             } while ((line = in.readLine()) != null);
-
                         }
                     }
                 }
             }
-        }//} // ** DEBUG **
+        }
         in.close();
+        printStatistics(); // ** STATISTICS **
+        //printHistogram(); // ** STATISTICS **
     }
 
     // buffered reader for reading zip file
@@ -303,18 +356,28 @@ public class Parser {
         parser.setBuilder(builder);
         parser.parse(tmp);
 
-        tmp = writer.toString().replaceAll("\\s*&lt;\\s*", "<").replaceAll("\\s*&gt;\\s*", ">").replaceAll("(</?\\s*)((?i:br))(\\s*/?>)", "<$2/>");
+        tmp = writer.toString()
+                .replaceAll("\\s*&lt;\\s*", "<")
+                .replaceAll("\\s*&gt;\\s*", ">")
+                .replaceAll("(</?\\s*)((?i:br))(\\s*/?>)", "<$2/>")
+                .replaceAll("\\{\\s*\\{\\s*(?i:okina)\\s*}\\s*}", "ʻ")
+                .replaceAll("\\{\\s*\\{\\s*(?i:e?ndash)\\s*}\\s*}", "–");
         tmp = Jsoup.clean(tmp, Whitelist.none().addTags("br")).replaceAll("\\n", "");// remove all HTML tags but "br", remove all newlines
 
-        // additional replacements
+        // additional wikitext replacements
         Pattern pattern = Pattern.compile("(\\{\\s*\\{\\s*)([^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", Pattern.CASE_INSENSITIVE); // (\{\s*\{\s*)([^\{}\|]*)([^\{}]*\|\s*)([^\{}]*?)(\s*}\s*})
         Matcher matcher = pattern.matcher(tmp);
         if (matcher.find()) {
             if (matcher.group(2).matches("(?i:lang).*")) {
-                tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:lang)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$4");
+                tmp = tmp
+                        .replaceAll("s=", "")
+                        .replaceAll("(\\{\\s*\\{\\s*)((?i:lang)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$4");
             }
             else if (matcher.group(2).matches("(?i:small).*")) {
                 tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:small)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$4");
+            }
+            else if (matcher.group(2).matches("(?i:big).*")) {
+                tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:big)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$4");
             }
             else if (matcher.group(2).matches("(?i:transl).*")) {
                 tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:transl)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$4");
@@ -338,7 +401,11 @@ public class Parser {
                 tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:nq)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$4");
             }
             else if (matcher.group(2).matches("(?i:native).*")) {
-                tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:native)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$4");
+                tmp = tmp
+                        .replaceAll("\\|paren=[^|}]*", "")
+                        .replaceAll("\\|italics=[^|}]*", "")
+                        .replaceAll("\\|rtl=[^|}]*", "")
+                        .replaceAll("(\\{\\s*\\{\\s*)((?i:native)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$4");
             }
             else if (matcher.group(2).matches("(?i:my).*")) {
                 tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:my)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$4");
@@ -349,8 +416,17 @@ public class Parser {
             else if (matcher.group(2).matches("(?i:hebrew).*")) {
                 tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:hebrew)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$4");
             }
+            else if (matcher.group(2).matches("(?i:script\\/arabic).*")) {
+                tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:script\\/arabic)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$4");
+            }
+            else if (matcher.group(2).matches("(?i:nobold).*")) {
+                tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:nobold)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$4");
+            }
             else if (matcher.group(2).matches("(?i:nihongo).*")) {
                 tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:nihongo)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$1ubl$3$4$5");
+            }
+            else if (matcher.group(2).matches("(?i:csv).*")) {
+                tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:csv)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "$1ubl$3$4$5");
             }
             else if (matcher.group(2).matches("(?i:sfn).*")) {
                 tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:sfn)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "");
@@ -388,6 +464,9 @@ public class Parser {
             else if (matcher.group(2).matches("(?i:font).*")) {
                 tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:font)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "");
             }
+            else if (matcher.group(2).matches("(?i:flagicon).*")) {
+                tmp = tmp.replaceAll("(\\{\\s*\\{\\s*)((?i:flagicon)[^\\{}\\|]*)([^\\{}]*\\|\\s*)([^\\{}]*?)(\\s*}\\s*})", "");
+            }
             else
                 return tmp; // to avoid infinite recursion if the tag is none of above
             tmp = removeHtmlTags(tmp);
@@ -399,24 +478,61 @@ public class Parser {
         if (alternateNames.size() > 0) {
             System.out.println("----------------");
             System.out.println(title);
-            /*if (infoboxName.length() == 0)
-                System.out.println("-");
-            else
-                System.out.println("- " + infoboxName + " -");*/
             System.out.println("-");
             for (int j = 0; j < alternateNames.size(); j++)
                 System.out.println(alternateNames.get(j));
         }
     }
 
-    private static void index(String title, String infoboxName, List<String> alternateNames) throws IOException {
+    private static void printStatistics() {
+        System.out.println("----------------");
+        System.out.println("Total articles: " + titlesTotal);
+        System.out.println("Total articles with alternate names: " + titlesWithAltNameTotal);
+        System.out.println("Total infoboxes with alternate names: " + infoboxesTotal);
+        System.out.println("Total alternate names: " + alternateNamesTotal);
+    }
+
+    private static void printHistogram() {
+        System.out.println("----------------");
+        System.out.println("aka");
+        for (int i = akaHist.size() - 1; i > 0; i--) {
+            if (akaHist.get(i) != 0) {
+                for (int j = 1; j <= i; j++)
+                    System.out.println(j + ": " + akaHist.get(j));
+                break;
+            }
+        }
+        System.out.println("\nalt_name");
+        for (int i = altNameHist.size() - 1; i > 0; i--) {
+            if (altNameHist.get(i) != 0) {
+                for (int j = 1; j <= i; j++)
+                    System.out.println(j + ": " + altNameHist.get(j));
+                break;
+            }
+        }
+        System.out.println("\nalternate_name");
+        for (int i = alternateNameHist.size() - 1; i > 0; i--) {
+            if (alternateNameHist.get(i) != 0) {
+                for (int j = 1; j <= i; j++)
+                    System.out.println(j + ": " + alternateNameHist.get(j));
+                break;
+            }
+        }
+        System.out.println("\nall_tags");
+        for (int i = allTagsHist.size() - 1; i > 0; i--) {
+            if (allTagsHist.get(i) != 0) {
+                for (int j = 1; j <= i; j++)
+                    System.out.println(j + ": " + allTagsHist.get(j));
+                break;
+            }
+        }
+    }
+
+    private static void index(String title, String infoboxName, List<String> alternateNames, String tag) throws IOException {
         if (alternateNames.size() > 0) {
-            String titleFull = title;
-            title = titleFull.replaceAll("\\s*\\([^)]*\\)", ""); // remove redundant parentheses
             for (int i = 0; i < alternateNames.size(); i++) {
-                String alternateNameFull = alternateNames.get(i);
-                String alternateName = alternateNameFull.replaceAll("\\s*\\([^)]*\\)", ""); // remove redundant parentheses
-                indexer.addDocument(title, titleFull, infoboxName, alternateName, alternateNameFull);
+                String alternateName = alternateNames.get(i);
+                indexer.addDocument(title, infoboxName, alternateName, tag, alternateNames.size());
             }
         }
     }

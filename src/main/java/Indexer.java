@@ -3,12 +3,10 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
-import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
-import org.apache.lucene.document.StringField;
-import org.apache.lucene.document.TextField;
+import org.apache.lucene.document.*;
 import org.apache.lucene.index.*;
 import org.apache.lucene.queryparser.classic.ParseException;
+import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.*;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
@@ -23,6 +21,7 @@ public class Indexer {
     public static IndexReader reader;
     public static IndexSearcher searcher;
 
+    // initialize writer to enable writing to the index
     public static void initWriter() throws IOException {
         Runtime.getRuntime().addShutdownHook(new MessageWriter());
         analyzer = new StandardAnalyzer();
@@ -31,6 +30,7 @@ public class Indexer {
         writer = new IndexWriter(index, config);
     }
 
+    // initialize reader to enable reading from the index
     public static void initReader() throws IOException {
         Runtime.getRuntime().addShutdownHook(new MessageReader());
         analyzer = new StandardAnalyzer();
@@ -40,26 +40,40 @@ public class Indexer {
         searcher = new IndexSearcher(reader);
     }
 
-    public static void addDocument(String title, String titleFull, String infoboxName, String alternateName, String alternateNameFull) throws IOException {
+    // add document to index
+    public static void addDocument(String title, String infoboxName, String alternateName, String tag, int frequency) throws IOException {
         Document doc = new Document();
-        doc.add(new StringField("title", title, Field.Store.YES));
-        doc.add(new StringField("titleLowerCase", title.toLowerCase(), Field.Store.YES));
-        doc.add(new StringField("titleFull", titleFull, Field.Store.YES));
+        doc.add(new TextField("title", title, Field.Store.YES));
+        doc.add(new TextField("titleLowerCase", title.toLowerCase(), Field.Store.YES));
         doc.add(new TextField("infoboxName", infoboxName, Field.Store.YES));
         doc.add(new TextField("alternateName", alternateName, Field.Store.YES));
-        doc.add(new TextField("alternateNameFull", alternateNameFull, Field.Store.YES));
-        doc.add(new TextField("fullText", titleFull.toLowerCase() + " " + alternateNameFull.toLowerCase(), Field.Store.YES));
-        //System.out.println(title + " - " + titleFull + " - " + infoboxName + " - " + alternateName + " - " + alternateNameFull); // ** DEBUG **
+        doc.add(new TextField("fullText", title.toLowerCase() + " " + alternateName.toLowerCase(), Field.Store.YES));
+        doc.add(new StringField("tag", tag.toLowerCase(), Field.Store.YES));
+        doc.add(new IntField("frequency", frequency, Field.Store.YES));
         writer.addDocument(doc);
     }
 
+    // get document from index by field and query
     public static List<Document> getDocuments(String field, String query, BooleanClause.Occur occur) throws ParseException, IOException {
         List<Document> documents = new ArrayList<>();
+        Query q = new QueryParser(field, analyzer).parse(query);
 
-        BooleanQuery q = new BooleanQuery();
-        q.add(new TermQuery(new Term(field, query)), occur);
+        TopDocs docs = searcher.search(q, reader.numDocs());
+        ScoreDoc[] hits = docs.scoreDocs;
 
-        //Query q = new QueryParser(field, analyzer).parse('"' + query + '"');
+        for (int i = 0; i < hits.length; ++i) {
+            int docId = hits[i].doc;
+            Document document = searcher.doc(docId);
+            if ("all_tags".equals(document.get("tag"))) // consider only general tag "all_tags" to avoid getting duplicates
+                documents.add(document);
+        }
+        return documents;
+    }
+
+    // get document from the index by tag
+    public static void getDocumentsByTag(String tag) throws ParseException, IOException {
+        List<Document> documents = new ArrayList<>();
+        Query q = new QueryParser("tag", analyzer).parse(tag);
 
         TopDocs docs = searcher.search(q, reader.numDocs());
         ScoreDoc[] hits = docs.scoreDocs;
@@ -69,7 +83,26 @@ public class Indexer {
             Document document = searcher.doc(docId);
             documents.add(document);
         }
-        return documents;
+        System.out.println("Alternate names found in parameter " + tag + ": " + documents.size());
+    }
+
+    // get articles by number of their alternate names
+    public static void getDocumentsByFrequency(int frequency) throws IOException {
+        Query q = NumericRangeQuery.newIntRange("frequency", 1, frequency, frequency, true, true);
+
+        TopDocs docs = searcher.search(q, reader.numDocs());
+        ScoreDoc[] hits = docs.scoreDocs;
+
+        List<String> results = new ArrayList<>();
+        for (int i = 0; i < hits.length; ++i) {
+            int docId = hits[i].doc;
+            Document document = searcher.doc(docId);
+            String title = document.get("title");
+            if (!results.contains(title) && "all_tags".equals(document.get("tag"))) {
+                results.add(title);
+                System.out.println(title);
+            }
+        }
     }
 
     static class MessageReader extends Thread {
