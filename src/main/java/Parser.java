@@ -199,7 +199,12 @@ public class Parser {
     public static List<String> recheckAlternateNames(List<String> alternateNames) {
         List<String> recheckedAlternateNames = new ArrayList<>();
         for (int i = 0; i < alternateNames.size(); i++) {
-            String tmp = Jsoup.parse(alternateNames.get(i)).text();
+            String tmp = Jsoup.parse(alternateNames.get(i)).text() // decode HTML and remove redundant apostrophes
+                    .replaceAll("(\")([^\"]+)(\")", "$2")
+                    .replaceAll("(')([^']+)(')", "$2")
+                    .replaceAll("(')([^']+)(')", "$2")
+                    .replaceAll("(')([^']+)(')", "$2") // must be replaced 3 times, because there might be 3 apostrophes, for example see Wikipedia article National Park to Park Highway, parameter alternate_name in the infobox
+                    .replaceAll("(«)([^»]+)(»)", "$2");
             if (tmp.matches("^(?!\\s*$).+")) { // non empty string
                 recheckedAlternateNames.add(tmp);
             }
